@@ -1,5 +1,9 @@
 # TODO: Add stop word
 # TODO: Add GPT thread 
+# TODO: Isolate STT and TTS modules as interfaces
+# TODO: Test other TTS services such as PlayHT and Tourtoise
+# TODO: Add multispeaker detection
+# TODO: Add timestamp?
 import threading
 from queue import Queue
 import re
