@@ -9,7 +9,7 @@ from pprint import pprint
 import os
 import asyncio
 import sys
-from typing import Optional
+from typing import AsyncGenerator, Generator, Optional
 
 from openai import AsyncOpenAI
 from dotenv import load_dotenv
@@ -116,13 +116,27 @@ async def listen_mic():
     async for result in mic.listen_loop(dictate=False):
         yield result
 
+# Breaks the text generator into a sentences generator
+async def sentences_generator(text_stream: AsyncGenerator[str, None]):
+    buffer = ""
+    async for chunk in text_stream:
+        buffer += chunk
+        if sentence_match := re.search(r'([^.!?]+)([.!?])', buffer):
+            sentence = sentence_match.group(1)
+            punctuation = sentence_match.group(2)
+            sentence = sentence + punctuation
+            buffer = buffer.lstrip(sentence)
+            yield sentence
+
+
 async def chat_loop():
     async for result in listen_mic():
         print('You: ' + result)
         if not re.findall(r'(\[|\(|\)\])', result):
-            result = await prompt(result)
-            print('Assitant: ' + result)
-            await talk(result)
+            result_generator = prompt_stream(result)
+            async for sentence in sentences_generator(result_generator):
+                print('Assitant: ' + sentence)
+                await talk(sentence)
 
 async def close():
     audio_player.terminate()
