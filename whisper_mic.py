@@ -194,7 +194,6 @@ class WhisperMic:
 
 
     async def listen_loop(self, dictate: bool = False, phrase_time_limit=None) -> None:
-        print("LOOP STARTING")
         for result in self.listen_continuously(phrase_time_limit=phrase_time_limit):
             if dictate:
                 self.keyboard.type(result)

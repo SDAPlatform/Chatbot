@@ -1,4 +1,9 @@
+# TODO: Add stop word
+# TODO: Add GPT thread 
+import threading
+from queue import Queue
 import re
+import faster_whisper as whisper
 from openai.types import model
 from whisper_mic import WhisperMic
 from pathlib import Path
@@ -48,8 +53,8 @@ async def prompt_stream(prompt: str, temp: float = 0.03, max_tokens = 128, top_p
 
     async for chunk in response:
         if chunk.choices[0].delta.content is not None:
-            yield chunk.choices[0].delta.content
 
+            yield chunk.choices[0].delta.content
 # Sends a prompt to the OpenAI API and returns the response as a single string
 async def prompt(prompt: str, temp: float = 0.03, max_tokens = 128, top_p: float = 1, frequency_penalty: float = 0, presence_penalty: float = 0):
     start_time = time() 
@@ -94,25 +99,24 @@ async def talk(input: str) -> None:
 
 # Transcribes the audio from file
 # Offline
-# async def transcribe(file: Path) -> None:
-#     audio = whisper.load_audio(file)
-#
-#     a = time()
-#     model = whisper.load_model("tiny.en", device="cpu")
-#
-#     b = time()
-#     result = whisper.transcribe(model, audio, language="en")
-#
-#     c = time()
-#     print(f"Loading model: {b - a:.2f}s")
-#     print(f"Transcribing: {c - b:.2f}s")
-#
-#     print(json.dumps(result, indent = 2, ensure_ascii = False))
+async def transcribe(file: Path) -> None:
+    audio = whisper.load_audio(file)
+
+    a = time()
+    model = whisper.load_model("tiny.en", device="cpu")
+
+    b = time()
+    result = whisper.transcribe(model, audio, language="en")
+
+    c = time()
+    print(f"Loading model: {b - a:.2f}s")
+    print(f"Transcribing: {c - b:.2f}s")
+
+    print(json.dumps(result, indent = 2, ensure_ascii = False))
 
 # Transcribes the audio from the microphone
 # Offline
-async def listen_mic():
-    mic = WhisperMic(model='base', english=True, implementation='faster_whisper')
+async def listen_mic(mic: WhisperMic) -> AsyncGenerator[str, None]:
     async for result in mic.listen_loop(dictate=False):
         yield result
 
@@ -130,13 +134,53 @@ async def sentences_generator(text_stream: AsyncGenerator[str, None]):
 
 
 async def chat_loop():
-    async for result in listen_mic():
-        print('You: ' + result)
-        if not re.findall(r'(\[|\(|\)\])', result):
+    mic = WhisperMic(model='base', english=True, implementation='faster_whisper')
+    queue = Queue(1)
+    listening = threading.Semaphore()
+
+    async def read_mic(mic):
+        async for result in listen_mic(mic):
+            print('Mic: ' + result)
+            if listening._value:
+                print("Listening .....")
+                if not re.findall(r'(\[|\(|\)\])', result):
+                    queue.put(result)
+            else:
+                print("Background ...")
+                # if 'stop' in result.lower():
+                #     print("Stop detected")
+                #     listening.acquire()
+
+    def run_read_mic():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(read_mic(mic))
+        loop.close()
+
+    threading.Thread(target=run_read_mic, daemon=True).start()
+
+    async def send_user_input():
+        while result := queue.get():
+            listening.acquire()
+            print("Mic Disabled")
+            print('You: ' + result)
             result_generator = prompt_stream(result)
             async for sentence in sentences_generator(result_generator):
                 print('Assitant: ' + sentence)
-                await talk(sentence)
+                if not listening._value:
+                    await talk(sentence)
+            listening.release()
+
+    def run_send_user_input():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(send_user_input())
+        loop.close()
+
+    threading.Thread(target=run_send_user_input, daemon=True).start()
+    # threading.Thread(target=asyncio.wait_for(send_user_input(), None), daemon=True).start()
+
+    await asyncio.sleep(10000)
 
 async def close():
     audio_player.terminate()
